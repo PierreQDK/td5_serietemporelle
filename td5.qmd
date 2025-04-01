@@ -50,5 +50,124 @@ editor:
 
 
 
+# Importation des données et transformation
+```{r}
+# Charger le package
+library(readxl)
 
+# Lire le fichier Excel (en supposant qu'il est dans ton répertoire de travail)
+data <- read_excel("wheat_support5_STU.xlsx")
+
+# Aperçu des données
+head(data)
+```
+
+```{r}
+library(xts)
+data_xts <- xts(data$return, order.by = as.Date(data$date))
+plot(data_xts, main = "Rendements du blé")
+```
+
+
+# test des ACf et PACF
+```{r}
+acf(data_xts, main = "ACF des rendements")
+pacf(data_xts, main = "PACF des rendements")
+
+```
+
+```{r}
+library(forecast)
+
+auto.arima(data_xts, max.q = 0, seasonal = FALSE, ic = "bic")
+
+```
+
+
+# Rolling  windows
+
+```{r}
+library(forecast)
+
+# Paramètres
+horizons <- c(1, 5)
+rolling_window_10 <- 10 * 252  # approx 252 jours par an
+rolling_window_3  <- 3 * 252
+
+# Fonction de rolling forecast
+rolling_forecast <- function(series, window_size, h = 1) {
+  n <- length(series)
+  forecasts <- rep(NA, n - window_size - h + 1)
+  actuals <- rep(NA, n - window_size - h + 1)
+  
+  for (i in 1:(n - window_size - h + 1)) {
+    train <- series[i:(i + window_size - 1)]
+    model <- Arima(train, order = c(1, 0, 0))  # AR(1) par défaut
+    forecast_i <- forecast(model, h = h)
+    
+    forecasts[i] <- forecast_i$mean[h]
+    actuals[i] <- series[i + window_size + h - 1]
+  }
+  
+  return(data.frame(actual = actuals, forecast = forecasts))
+}
+
+# Lancer les prévisions
+A10_h1 <- rolling_forecast(data_xts, rolling_window_10, h = 1)
+A3_h1  <- rolling_forecast(data_xts, rolling_window_3, h = 1)
+A10_h5 <- rolling_forecast(data_xts, rolling_window_10, h = 5)
+A3_h5  <- rolling_forecast(data_xts, rolling_window_3, h = 5)
+
+```
+
+
+# Mincer-Zarnowitz, calcul de la probabilité critique de chaque modèle
+
+```{r}
+# Fonction de test déjà définie
+test_MZ <- function(actual, forecast) {
+  model <- lm(actual ~ forecast)
+  coeftest(model, vcov = NeweyWest(model))  # erreurs robustes HAC
+}
+
+# Liste des cas à tester
+cat("\nTest de Mincer-Zarnowitz - Résultats :\n")
+
+cat("\n➤ A10 - Horizon 1 :\n")
+print(test_MZ(A10_h1$actual, A10_h1$forecast))
+
+cat("\n➤ A10 - Horizon 5 :\n")
+print(test_MZ(A10_h5$actual, A10_h5$forecast))
+
+cat("\n➤ A3 - Horizon 1 :\n")
+print(test_MZ(A3_h1$actual, A3_h1$forecast))
+
+cat("\n➤ A3 - Horizon 5 :\n")
+print(test_MZ(A3_h5$actual, A3_h5$forecast))
+
+
+```
+
+
+# Statistique de Diebold et Mariano avec deux fonctions de pertes 
+```{r}
+diebold_mariano_test <- function(actual, f1, f2, loss = "mse") {
+  if (loss == "mse") {
+    d <- (actual - f1)^2 - (actual - f2)^2
+  } else if (loss == "mae") {
+    d <- abs(actual - f1) - abs(actual - f2)
+  } else {
+    stop("Fonction de perte non reconnue.")
+  }
+  
+  dm_model <- lm(d ~ 1)
+  test <- coeftest(dm_model, vcov = NeweyWest(dm_model))
+  return(test)
+}
+
+# Comparaison A10 vs A3
+cat("Diebold-Mariano A10 vs A3 (h=1, MSE) :\n")
+diebold_mariano_test(A10_h1$actual, A10_h1$forecast, A3_h1$forecast, loss = "mse")
+
+```
 
