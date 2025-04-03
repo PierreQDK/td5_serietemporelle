@@ -15,6 +15,7 @@ editor:
     wrap: 72
 ---
 
+```{=tex}
 \begin{titlepage}
     \begin{center}
         {\LARGE \textbf{Séries temporelles univariées}}\\
@@ -42,15 +43,11 @@ editor:
 \hypersetup{linkcolor=black}
 \tableofcontents
 \endgroup
-
+```
 \newpage
 
-
-
-
-
-
 # Importation des données et transformation
+
 ```{r}
 # Charger le package
 library(readxl)
@@ -68,9 +65,10 @@ data_xts <- xts(data$return, order.by = as.Date(data$date))
 plot(data_xts, main = "Rendements du blé")
 ```
 
-
 # test des ACf et PACF
+
 ```{r}
+par(mfrow=c(1,2))
 acf(data_xts, main = "ACF des rendements")
 pacf(data_xts, main = "PACF des rendements")
 
@@ -78,14 +76,15 @@ pacf(data_xts, main = "PACF des rendements")
 
 ```{r}
 library(forecast)
-
 auto.arima(data_xts, max.q = 0, seasonal = FALSE, ic = "bic")
-
 ```
 
+**Interprétation**
 
-# Rolling  windows
+On a essayé de comparer nos résultats avec la fonction "auto.arima" par rapport à ce qu'on a obtenu précédemment. Cette dernière nous donne un ARIMA(0, 0, 0), ce qui signifie qu'il ne contient ni composantes autorégressives (AR), ni composantes de moyenne mobile (MA), et il n'applique pas de différenciation (d=0). Nous décidons de garder ce que nous avons obtenu précédemment avec AR(1).
 
+
+# Rolling windows
 ```{r}
 library(forecast)
 
@@ -120,10 +119,25 @@ A3_h5  <- rolling_forecast(data_xts, rolling_window_3, h = 5)
 
 ```
 
+#Table pour comparer les observations
+```{r}
+# Trouver la longueur minimale
+min_length <- min(length(A10_h1$actual), length(A10_h1$forecast), length(A3_h1$forecast))
+
+# Construire la table en coupant les vecteurs à la longueur minimale
+table_results <- data.frame(
+  Yt = A10_h1$actual[1:min_length],
+  `t-1` = c(NA, head(A10_h1$actual, min_length - 1)), 
+  `Prévisions A10` = A10_h1$forecast[1:min_length],
+  `Prévisions A3` = A3_h1$forecast[1:min_length]
+)
+
+```
 
 # Mincer-Zarnowitz, calcul de la probabilité critique de chaque modèle
-
 ```{r}
+library(lmtest)
+library(sandwich)
 # Fonction de test déjà définie
 test_MZ <- function(actual, forecast) {
   model <- lm(actual ~ forecast)
@@ -144,12 +158,67 @@ print(test_MZ(A3_h1$actual, A3_h1$forecast))
 
 cat("\n➤ A3 - Horizon 5 :\n")
 print(test_MZ(A3_h5$actual, A3_h5$forecast))
+```
+
+**Test de Mincer-Zarnowitz**
+L'objectif du test de Mincer-Zarnowitz est d'évaluer la qualité des prévisions d'un modèle. Un modèle parfaitement calibré doit avoir un alpha égal à zéro et un coefficient de prévision égal à un. Si l'alpha est différent de zéro, cela indique un biais systématique dans les prévisions. Si le coefficient est inférieur à un, le modèle sous-estime les variations de la variable étudiée, ce qui signifie que les prévisions sont trop conservatrices. Si le coefficient est supérieur à un, le modèle surestime les variations, amplifiant ainsi les mouvements observés. Un modèle efficace doit donc avoir un alpha proche de zéro et un coefficient proche de un afin d'éviter tout biais et de bien refléter la dynamique des données.
 
 
+**Interprétation pour un modèle AR(1)**
+*10 dernières années avec t+1* :
+
+On observe que l'alpha est très proche de zéro, ce qui est un bon signe. En revanche, pour le coefficient B1, on constate qu'il est significativement différent de 1 (p < 0,05), ce qui indique que les prévisions du modèle sont assez éloignées des valeurs réelles.
+
+               Estimate  Std. Error t value Pr(>|t|)  
+(Intercept) -0.00001682  0.00042520 -0.0396  0.96845  
+forecast    -4.88061660  1.94633718 -2.5076  0.01224 *
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+
+*10 dernière années avec t+5* :
+On observe que l'alpha est très proche de zéro, ce qui est un bon signe. En revanche, pour le coefficient B1, on remarque qu'il est significativement différent de 1 (p < 0,05), ce qui indique que les prévisions du modèle sont très éloignées des valeurs réelles, en occurrence, le modèle surestime les variations, amplifiant ainsi les mouvements observés.
+
+
+               Estimate  Std. Error t value Pr(>|t|)
+(Intercept)  5.8526e-05  4.6392e-04  0.1262   0.8996
+forecast    -4.0754e+00  3.4548e+00 -1.1796   0.2383
+
+
+*3 dernière années avec t+1* : 
+On observe que l'alpha est très proche de zéro, ce qui est un bon signe. De plus notre coefficients, est plus proche de 1 que ce qu'on a observé auparavant. Il est négatif donc le modèle sous-estime les variations.
+
+
+               Estimate  Std. Error t value Pr(>|t|)
+(Intercept)  0.00010597  0.00031842  0.3328   0.7393
+forecast    -0.52857642  0.38544174 -1.3714   0.1703
+
+
+*3 dernière années avec t+5* :
+Pareil que précédemment, on observe que l'alpha est très proche de zéro, ce qui est un bon signe. De plus notre coefficients, est assez proche de 1 que ce qu'on a observé auparavant. Il est négatif donc le modèle sous-estime les variations.
+
+
+               Estimate  Std. Error t value Pr(>|t|)
+(Intercept)  0.00013234  0.00031827  0.4158   0.6776
+forecast    -1.00416504  0.82403294 -1.2186   0.2231
+
+
+#Compare avec une marche aléaoire
+```{r}
+# Générer les prévisions de la marche aléatoire (Y_t-1)
+random_walk_forecast <- c(NA, head(A10_h1$actual, -1))  # Y_t-1 comme prévision
+
+# Test de Mincer-Zarnowitz pour la marche aléatoire
+cat("\nTest de Mincer-Zarnowitz - Marche aléatoire Horizon 1 :\n")
+print(test_MZ(A10_h1$actual, random_walk_forecast))
 ```
 
 
-# Statistique de Diebold et Mariano avec deux fonctions de pertes 
+
+
+
+# Statistique de Diebold et Mariano avec deux fonctions de pertes
+
 ```{r}
 diebold_mariano_test <- function(actual, f1, f2, loss = "mse") {
   if (loss == "mse") {
@@ -170,4 +239,3 @@ cat("Diebold-Mariano A10 vs A3 (h=1, MSE) :\n")
 diebold_mariano_test(A10_h1$actual, A10_h1$forecast, A3_h1$forecast, loss = "mse")
 
 ```
-
