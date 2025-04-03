@@ -1,0 +1,262 @@
+---
+title: "tets"
+format: html
+editor: visual
+---
+
+
+
+
+
+
+# Importation des données et transformation
+
+## Importation
+```{r}
+# Charger le package
+library(readxl)
+
+# Lire le fichier Excel (en supposant qu'il est dans ton répertoire de travail)
+data <- read_excel("wheat_support5_STU.xlsx")
+
+# Aperçu des données
+head(data)
+```
+
+
+## Transformation
+
+```{r}
+library(xts)
+data_xts <- xts(data$return, order.by = as.Date(data$date))
+plot(data_xts, main = "Rendements du blé")
+```
+**Interprétation**
+
+Le graphique ci dessus qui présente l’évolution des rendements journaliers du blé sur la période allant du 2 janvier 2006 au 6 décembre 2022. On constate une volatilité marquée, avec des pics particulièrement importants autour de la crise financière de 2008 et en 2022, probablement en lien avec les perturbations des marchés agricoles mondiaux. 
+
+# Test des ACF et PACF
+
+## ACF
+
+```{r}
+acf(data_xts, main = "ACF des rendements")
+```
+
+**Interprétation**
+
+L’analyse du graphe de l’autocorrélation des rendements du blé révèle une structure caractérisée par un seul pic significatif au lag 1, qui dépasse nettement les bandes de confiance. Cela traduit une autocorrélation positive et marquée à court terme. En revanche, à partir du lag 2, on observe une chute brutale de l’autocorrélation : les barres restantes sont très faibles et insignifiantes, car elles restent bien en dessous du seuil de significativité. Cette dynamique suggère que la série suit un comportement proche d’un bruit blanc, avec uniquement une faible dépendance immédiate dans le temps.
+
+
+## PACF
+```{r}
+pacf(data_xts, main = "PACF des rendements")
+```
+
+**Interprétation**
+
+Le graphe de la PACF (autocorrélation partielle) des rendements du blé révèle dans l’ensemble une structure peu marquée. Toutefois, trois lags — 14, 17 et 23 — dépassent légèrement les bandes de confiance, suggérant des autocorrélations ponctuellement significatives. Néanmoins, ces dépassements sont isolés et ne suivent aucun schéma régulier ou décroissant. Ils ne traduisent donc pas une dynamique autoregressive persistante.
+
+Dans l’ensemble, la PACF confirme que la série est quasi non autocorrélée, à l’exception de ces quelques pics, probablement dus au bruit ou à des effets transitoires. Ces éléments ne remettent pas en cause le choix d’un modèle AR(1), qui reste le plus adapté et le plus parcimonieux pour capturer la seule dépendance significative observée dans la série (au lag 1 dans l’ACF).
+
+
+# Test avecc la fonction auto.arima
+
+```{r}
+library(forecast)
+
+auto.arima(data_xts, max.q = 0, seasonal = FALSE, ic = "bic")
+
+```
+
+
+# Prévisions à court terme via modèles AR avec rolling window
+
+```{r}
+library(forecast)
+
+# Paramètres
+horizons <- c(1, 5)
+rolling_window_10 <- 10 * 252  
+rolling_window_3  <- 3 * 252
+
+# Fonction de rolling forecast
+rolling_forecast <- function(series, window_size, h = 1) {
+  n <- length(series)
+  forecasts <- rep(NA, n - window_size - h + 1)
+  actuals <- rep(NA, n - window_size - h + 1)
+  
+  for (i in 1:(n - window_size - h + 1)) {
+    train <- series[i:(i + window_size - 1)]
+    model <- Arima(train, order = c(1, 0, 0))  # AR(1) par défaut
+    forecast_i <- forecast(model, h = h)
+    
+    forecasts[i] <- forecast_i$mean[h]
+    actuals[i] <- series[i + window_size + h - 1]
+  }
+  
+  return(data.frame(actual = actuals, forecast = forecasts))
+}
+
+# Lancer les prévisions
+A10_h1 <- rolling_forecast(data_xts, rolling_window_10, h = 1)
+A3_h1  <- rolling_forecast(data_xts, rolling_window_3, h = 1)
+A10_h5 <- rolling_forecast(data_xts, rolling_window_10, h = 5)
+A3_h5  <- rolling_forecast(data_xts, rolling_window_3, h = 5)
+
+```
+
+# création marché aléatoire 
+
+```{r}
+## Création de la MA
+random_walk_forecast <- function(ts_data, horizon) {
+ n <- length(ts_data)
+ rw_forecast <- ts_data[(horizon + 1):n]  # Dernière valeur observée
+ return(rw_forecast)
+}
+
+rw_forecast_1 <- random_walk_forecast(data_xts, horizon = 1)
+rw_forecast_5 <- random_walk_forecast(data_xts, horizon = 5)
+
+```
+
+# Mincer-Zarnowitz, calcul de la probabilité critique de chaque modèle
+
+
+```{r}
+rw_forecast <- function(series, h = 1) {
+  n <- length(series)
+  forecasts <- series[1:(n - h)]
+  actuals <- series[(1 + h):n]
+  
+  return(data.frame(actual = actuals, forecast = forecasts))
+}
+
+# Créer les prévisions RW
+RW_h1 <- rw_forecast(data_xts, h = 1)
+RW_h5 <- rw_forecast(data_xts, h = 5)
+
+# Test de Mincer-Zarnowitz pour la marche aléatoire
+cat("\n➤ Marche aléatoire - Horizon 1 :\n")
+print(test_MZ(RW_h1$actual, RW_h1$forecast))
+
+cat("\n➤ Marche aléatoire - Horizon 5 :\n")
+print(test_MZ(RW_h5$actual, RW_h5$forecast))
+```
+
+```{r}
+test_MZ <- function(actual, forecast) {
+  model <- lm(actual ~ forecast)
+  coeftest(model, vcov = NeweyWest(model))  
+}
+
+# Liste des cas à tester
+cat("\nTest de Mincer-Zarnowitz - Résultats :\n")
+
+cat("\n➤ A10 - Horizon 1 :\n")
+print(test_MZ(A10_h1$actual, A10_h1$forecast))
+
+cat("\n➤ A10 - Horizon 5 :\n")
+print(test_MZ(A10_h5$actual, A10_h5$forecast))
+
+cat("\n➤ A3 - Horizon 1 :\n")
+print(test_MZ(A3_h1$actual, A3_h1$forecast))
+
+cat("\n➤ A3 - Horizon 5 :\n")
+print(test_MZ(A3_h5$actual, A3_h5$forecast))
+```
+**Interprétation**
+
+
+
+
+
+
+
+# Statistique de Diebold et Mariano avec deux fonctions de pertes 
+
+## Comparaison A10 et A3 avec un horizon 1
+```{r}
+diebold_mariano_test <- function(actual, f1, f2, loss = "mse") {
+  if (loss == "mse") {
+    d <- (actual - f1)^2 - (actual - f2)^2
+  } else if (loss == "mae") {
+    d <- abs(actual - f1) - abs(actual - f2)
+  } else {
+    stop("Fonction de perte non reconnue.")
+  }
+  
+  dm_model <- lm(d ~ 1)
+  test <- coeftest(dm_model, vcov = NeweyWest(dm_model))
+  return(test)
+}
+
+# Comparaison A10 vs A3 avec horizon 1 
+cat("Diebold-Mariano A10 vs A3 (h=1, MSE) :\n")
+diebold_mariano_test(A10_h1$actual, A10_h1$forecast, A3_h1$forecast, loss = "mse")
+
+```
+**Interprétation**
+
+L’interprétation du test de Diebold-Mariano se fait via la p-value. En effet, si celle-ci est inférieure à 0,05, alors on rejette l’hypothèse nulle : les deux séries sont significativement différentes l’une de l’autre. En revanche, si la p-value est supérieure à 0,05, on ne rejette pas $h0$ et les deux modèles sont statistiquement aussi bons l’un que l’autre.
+Ici, la p-value est de 0,9375, donc l’hypothèse nulle $H0$ ne peut pas être rejetée. Les deux modèles sont par conséquent statistiquement aussi bons l’un que l’autre.
+
+
+## Comparaison A10 et A3 avec un horizon 5
+```{r}
+# Comparaison A10 vs A3 avec horizon 5
+cat("Diebold-Mariano A10 vs A3 (h=5, MSE) :\n")
+diebold_mariano_test(A10_h5$actual, A10_h5$forecast, A3_h5$forecast, loss = "mse")
+```
+
+**Interprétation**
+
+Ici, la p-value est de 0,2764, donc l’hypothèse nulle $H0$ ne peut pas être rejetée. Les deux modèles sont par conséquent statistiquement aussi bons l’un que l’autre.
+
+
+
+## Comparaison A10 avec la marche aléatoire
+
+```{r}
+# Comparaison A10 vs A3 avec horizon 5
+cat("Diebold-Mariano A10 vs marché aléatoire (h=1, MSE) :\n")
+diebold_mariano_test(A10_h1$actual, A10_h1$forecast, rw_forecast_1, loss = "mse")
+```
+
+
+```{r}
+cat("Diebold-Mariano A10 vs A3 (h=5, MSE) :\n")
+diebold_mariano_test(A10_h5$actual, A10_h5$forecast, rw_forecast_5, loss = "mse")
+```
+
+
+```{r}
+cat("Diebold-Mariano A10 vs A3 (h=5, MSE) :\n")
+diebold_mariano_test(A3_h5$actual, A3_h5$forecast, rw_forecast_5, loss = "mse")
+```
+
+
+
+
+```{r}
+cat("Diebold-Mariano A10 vs A3 (h=5, MSE) :\n")
+diebold_mariano_test(A3_h1$actual, A3_h1$forecast, rw_forecast_1, loss = "mse")
+```
+
+**Interprétation**
+
+
+
+
+
+# Conclusion 
+
+
+
+
+
+
+
+
+
